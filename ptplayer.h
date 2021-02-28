@@ -6,7 +6,7 @@
  **************************************************/
 
 /*
-  Version 5.4
+  Version 6.1
   Written by Frank Wille in 2013, 2016, 2017, 2018, 2019, 2020.
 */
 
@@ -79,7 +79,7 @@ void ASM mt_soundfx(REG(a6, void *custom),
       WORD sfx_per  (hardware replay period for sample)
       WORD sfx_vol  (volume 0..64, is unaffected by the song's master volume)
       BYTE sfx_cha  (0..3 selected replay channel, -1 selects best channel)
-      UBYTE sfx_pri (unsigned priority, must be non-zero)
+      BYTE sfx_pri (priority, must be in the range 1..127)
     When multiple samples are assigned to the same channel the lower
     priority sample will be replaced. When priorities are the same, then
     the older sample is replaced.
@@ -96,7 +96,7 @@ typedef struct SfxStructure
 	UWORD sfx_per; /* hardware replay period for sample */
 	UWORD sfx_vol; /* volume 0..64, is unaffected by the song's master volume */
 	BYTE sfx_cha;  /* 0..3 selected replay channel, -1 selects best channel */
-	UBYTE sfx_pri; /* unsigned priority, must be non-zero */
+	BYTE sfx_pri;  /* priority, must be in the range 1..127 */
 } SfxStructure;
 
 typedef struct SfxChanStatus
@@ -110,6 +110,33 @@ typedef struct SfxChanStatus
 
 SfxChanStatus * ASM mt_playfx(REG(a6, void *custom),
 	REG(a0, SfxStructure *SfxStructurePointer));
+
+/*
+  mt_loopfx(a6=CUSTOM, a0=SfxStructurePointer)
+    Request playing of a looped sound effect on a fixed channel, which
+    will be blocked for music until the effect is stopped (mt_stopfx()).
+    It uses the same sfx-structure as mt_playfx(), but the priority is
+    ignored. A looped sound effect has always highest priority and will
+    replace a previous effect on the same channel. No automatic channel
+    selection possible!
+    Also make sure the sample starts with a zero-word, which is used
+    for idling when the effect is stopped. This word is included in the
+    total length calculation, but excluded when actually playing the loop.
+*/
+
+void ASM mt_loopfx(REG(a6, void *custom),
+	REG(a0, SfxStructure *SfxStructurePointer));
+
+/*
+  mt_stopfx(a6=CUSTOM, d0=Channel.b)
+    Immediately stop a currently playing sound effect on a channel (0..3)
+    and make it available for music, or other effects, again. This is the
+    only way to stop a looped sound effect (mt_loopfx()), besides stopping
+    replay completely (mt_end()).
+*/
+
+void ASM mt_stopfx(REG(a6, void *custom),
+	REG(d0, UBYTE ChannelNo));
 
 /*
   mt_musicmask(a6=CUSTOM, d0=ChannelMask.b)

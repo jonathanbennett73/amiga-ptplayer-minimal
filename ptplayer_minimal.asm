@@ -8,12 +8,11 @@
 ; I, the copyright holder of this work, hereby release it into the
 ; public domain. This applies worldwide.
 ;
-; 6.1.1 - Antiriad's mods for small code size
-; Removed SDATA code.
-; mt_data is in BSS (no longer completely PC relative, focused on exe size) 
-; MINIMAL_ENABLE_VIB_SAWRECT to enable SAW and RECT vib/tremolo. Saves a few KB.
-; Period table generated in code saving about 1KB.
-; VUMeter trigger added in _mt_VUMeter
+; 6.1 (unofficial) - Antiriad's mods for small code size
+; - Removed SDATA code.
+; - mt_data is in BSS (no longer completely PC relative, focused on exe size) 
+; - Period table generated in code saving about 1KB.
+; - VUMeter trigger added in _mt_VUMeter
 ;
 ; The default version (single section, local base register) should
 ; work with most assemblers. Tested are: Devpac, vasm, PhxAss,
@@ -41,7 +40,7 @@
 ;   When a1 is NULL the samples are assumed to be stored after the patterns.
 ;
 ; _mt_end(a6=CUSTOM)
-;   Stop playing current module.
+;   Stop playing current module and sound effects.
 ;
 ; _mt_soundfx(a6=CUSTOM, a0=SamplePointer,
 ;             d0=SampleLength.w, d1=SamplePeriod.w, d2=SampleVolume.w)
@@ -53,12 +52,12 @@
 ;   Request playing of a prioritized external sound effect, either on a
 ;   fixed channel or on the most unused one.
 ;   Structure layout of SfxStructure:
-;     void *sfx_ptr (pointer to sample start in Chip RAM, even address)
-;     WORD sfx_len  (sample length in words)
-;     WORD sfx_per  (hardware replay period for sample)
-;     WORD sfx_vol  (volume 0..64, is unaffected by the song's master volume)
-;     BYTE sfx_cha  (0..3 selected replay channel, -1 selects best channel)
-;     BYTE sfx_pri  (unsigned priority, must be non-zero)
+;     void *sfx_ptr  (pointer to sample start in Chip RAM, even address)
+;     WORD  sfx_len  (sample length in words)
+;     WORD  sfx_per  (hardware replay period for sample)
+;     WORD  sfx_vol  (volume 0..64, is unaffected by the song's master volume)
+;     BYTE  sfx_cha  (0..3 selected replay channel, -1 selects best channel)
+;     BYTE  sfx_pri  (priority, must be in the range 1..127)
 ;   When multiple samples are assigned to the same channel the lower
 ;   priority sample will be replaced. When priorities are the same, then
 ;   the older sample is replaced.
@@ -67,6 +66,24 @@
 ;   Returns a pointer to a channel-status structure when the sample
 ;   is scheduled for playing, and NULL when the request was ignored.
 ;   !MINIMAL only.
+;
+; _mt_loopfx(a6=CUSTOM, a0=SfxStructurePointer)
+;   Request playing of a looped sound effect on a fixed channel, which
+;   will be blocked for music until the effect is stopped (_mt_stopfx).
+;   It uses the same sfx-structure as _mt_playfx, but the priority is
+;   ignored. A looped sound effect has always highest priority and will
+;   replace a previous effect on the same channel. No automatic channel
+;   selection possible!
+;   Also make sure the sample starts with a zero-word, which is used
+;   for idling when the effect is stopped. This word is included in the
+;   total length calculation, but excluded when actually playing the loop.
+;   !MINIMAL only.
+;
+; _mt_stopfx(a6=CUSTOM, d0=Channel.b)
+;   Immediately stop a currently playing sound effect on a channel (0..3)
+;   and make it available for music, or other effects, again. This is the
+;   only way to stop a looped sound effect (_mt_loopfx), besides stopping
+;   replay completely (_mt_end). !MINIMAL only.
 ;
 ; _mt_musicmask(a6=CUSTOM, d0=ChannelMask.b)
 ;   Bits set in the mask define which specific channels are reserved
@@ -122,6 +139,13 @@ MINIMAL		equ	1
 ENABLE_SAWRECT	equ	0
 	endc
 
+; Set this if you can guarantee that the word at $0 is cleared and if
+; you want to use if for idle-looping of samples.
+	ifnd	NULL_IS_CLEARED
+NULL_IS_CLEARED	equ	0
+	endc
+	
+;Antiriad: Added vumeter polling for syncing demos
 	ifnd	ENABLE_VUMETER
 ENABLE_VUMETER	equ	0
 	endc
@@ -447,6 +471,7 @@ mt_TimerBsetrep:
 
 
 ;---------------------------------------------------------------------------
+; Antiriad:
 ; Generates an accurate period/finetune table in ~140 bytes
 ; In: a4, mt_data
 ;
@@ -651,8 +676,12 @@ _mt_end:
 ; Stop playing current module.
 ; a6 = CUSTOM
 
-	lea	mt_data+mt_Enable,a0
-	clr.b	(a0)
+	lea	mt_data,a0
+	clr.b	mt_Enable(a0)
+	clr.w	mt_chan1+n_volume(a0)
+	clr.w	mt_chan2+n_volume(a0)
+	clr.w	mt_chan3+n_volume(a0)
+	clr.w	mt_chan4+n_volume(a0)
 
 	moveq	#0,d0
 	move.w	d0,AUD0VOL(a6)
@@ -935,9 +964,6 @@ found_sfx_ch:
 	lea	-n_freecnt(a2),a2
 	bra	set_sfx
 
-channel_offsets:
-	dc.w	0*n_sizeof,1*n_sizeof,2*n_sizeof,3*n_sizeof
-
 channelsfx:
 ; a0 = sfx structure
 ; d0 = fixed channel for new sound effect
@@ -968,6 +994,82 @@ exit_playfx:
 	move.l	a2,d0			; ptr to selected channel or NULL
 
 	movem.l	(sp)+,d2-d7/a0-a5
+	rts
+
+channel_offsets:
+	dc.w	0*n_sizeof,1*n_sizeof,2*n_sizeof,3*n_sizeof
+
+
+;---------------------------------------------------------------------------
+	xdef	_mt_loopfx
+_mt_loopfx:
+; Request playing of a looped sound effect on a fixed channel, which
+; will be blocked for music until the effect is stopped (_mt_stopfx).
+; It uses the same sfx-structure as _mt_playfx, but the priority is
+; ignored. A looped sound effect has always highest priority and will
+; replace a previous effect on the same channel. No automatic channel
+; selection possible!
+; Also make sure the sample starts with a zero-word, which is used
+; for idling when the effect is stopped. This word is included in the
+; total length calculation, but excluded when actually playing the loop.
+; a6 = CUSTOM
+; a0 = sfx-structure pointer with the following layout:
+;      0: ptr, 4: len.w, 6: period.w, 8: vol.w, 10: channel.b
+
+	lea	mt_data+mt_chan1,a1
+
+	moveq	#3,d0
+	and.b	sfx_cha(a0),d0
+	add.w	d0,d0
+	add.w	channel_offsets(pc,d0.w),a1
+
+	move.w	#$4000,INTENA(a6)
+	move.l	(a0)+,n_sfxptr(a1)	; sfx_ptr
+	move.w	(a0)+,n_sfxlen(a1)	; sfx_len
+	move.w	(a0)+,n_sfxper(a1)	; sfx_per
+	move.w	(a0),n_sfxvol(a1)	; sfx_vol
+	st	n_sfxpri(a1)		; sfx_pri -1 enables looped mode
+	move.w	#$c000,INTENA(a6)
+
+	rts
+
+
+;---------------------------------------------------------------------------
+	xdef	_mt_stopfx
+_mt_stopfx:
+; Immediately stop a currently playing sound effect on a channel.
+; a6 = CUSTOM
+; d0.b = channel (0..3)
+
+	ifnd	SDATA
+	lea	mt_data+mt_chan1(pc),a0
+	else
+	lea	mt_chan1(a4),a0
+	endc
+
+	and.w	#3,d0
+	add.w	d0,d0
+	add.w	channel_offsets(pc,d0.w),a0
+
+	move.w	#$4000,INTENA(a6)
+	tst.b	n_sfxpri(a0)
+	beq	.1			; no sfx playing anyway
+	moveq	#1,d0
+	move.b	d0,n_sfxpri(a0)
+	move.w	d0,n_sfxlen(a0)		; idle loop
+	move.w	#108,n_sfxper(a0)	; enter idle as quickly as possible
+	clr.w	n_sfxvol(a0)		; and cut volume
+	ifne	NULL_IS_CLEARED
+	clr.b	n_looped(a0)
+	clr.l	n_sfxptr(a0)		; use $0 for idle-looping
+	else
+	tst.b	n_looped(a0)
+	beq	.1
+	clr.b	n_looped(a0)
+	subq.l	#2,n_sfxptr(a0)		; idle loop at sample-start - 2
+	endc
+.1:	move.w	#$c000,INTENA(a6)
+
 	rts
 
 
@@ -1017,6 +1119,8 @@ _mt_mastervol:
 	add.w	d0,a0
 
 	move.w	#$4000,INTENA(a6)
+
+	;Antiriad: No master volume
 	lea	mt_data+mt_MasterVolTab,a1
 	move.l	a0,(a1)
 	move.w	#$c000,INTENA(a6)
@@ -1137,23 +1241,23 @@ get_new_note:
 
 ;Antiriad: Check which channels are playing new notes and set bitmask in _mt_VUMeter
 ;chan1 = 1, chan2 = 2, chan3  = 4, chan4 = 8
+;Note up to the caller to clear _mt_VUMeter when reading.
 	ifne	ENABLE_VUMETER
 	moveq	#0,d0
-	lea	mt_chan1(a4),a2
 .vu1:
-	tst.w	(a2)			;(a2)=n_note
+	tst.w	mt_chan1(a4)
 	beq.s	.vu2
 	addq.b	#1,d0
 .vu2:
-	tst.w	1*n_sizeof(a2)		;(a2)=n_note for chan 2
+	tst.w	mt_chan2(a4)
 	beq.s	.vu3
 	addq.b	#2,d0
 .vu3:
-	tst.w	2*n_sizeof(a2)		;(a2)=n_note for chan 2
+	tst.w	mt_chan3(a4)
 	beq.s	.vu4
 	addq.b	#4,d0
 .vu4:
-	tst.w	3*n_sizeof(a2)		;(a2)=n_note for chan 2
+	tst.w	mt_chan4(a4)
 	beq.s	.vuwrite
 	addq.b	#8,d0
 .vuwrite:
@@ -1268,6 +1372,8 @@ chan_sfx_only:
 
 	move.w	n_sfxlen(a2),d0
 	bne	start_sfx
+	tst.b	n_looped(a2)
+	bne	.1
 
 	move.w	n_intbit(a2),d0
 	and.w	INTREQR(a6),d0
@@ -1293,22 +1399,38 @@ start_sfx:
 	move.w	d1,DMACON(a6)
 
 	move.l	n_sfxptr(a2),a0
+	tst.b	n_sfxpri(a2)
+	bpl	.1
+
+	; looped sound effect
+	st	n_looped(a2)
+	addq.l	#2,a0			; skip first word, used for idling
+	subq.w	#1,d0
 	move.l	a0,AUDLC(a5)
 	move.w	d0,AUDLEN(a5)
-	move.w	n_sfxper(a2),d0
-	move.w	d0,AUDPER(a5)
-	move.w	n_sfxvol(a2),AUDVOL(a5)
+	bra	.2
+
+	; normal sound effect
+.1:	move.b	d7,n_looped(a2)
+	move.l	a0,AUDLC(a5)
+	move.w	d0,AUDLEN(a5)
+	moveq	#1,d0			; idles after playing once
+	ifne	NULL_IS_CLEARED
+	sub.l	a0,a0
+	endc
 
 	; save repeat and period for TimerB interrupt
-	move.l	a0,n_loopstart(a2)
-	move.w	#1,n_replen(a2)
+.2:	move.l	a0,n_loopstart(a2)
+	move.w	d0,n_replen(a2)
+	move.w	n_sfxper(a2),d0
+	move.w	d0,AUDPER(a5)
 	move.w	d0,n_period(a2)
+	move.w	n_sfxvol(a2),AUDVOL(a5)
 
-	move.b	d7,n_looped(a2)
-	move.w	d7,n_sfxlen(a2)
+	move.w	d7,n_sfxlen(a2)		; don't call start_sfx again
 
 	lea	mt_dmaon(pc),a0
-	or.w	d1,(a0)
+	or.w	d1,(a0)			; DMA-channel to enable on TimerB
 	rts
 	endc	; !MINIMAL
 
@@ -1336,7 +1458,9 @@ mt_checkfx:
 	and.w	#$00ff,d4
 	bra	blocked_e_cmds
 
-.2:	move.w	n_intbit(a2),d0
+.2:	tst.b	n_looped(a2)
+	bne	.1
+	move.w	n_intbit(a2),d0
 	and.w	INTREQR(a6),d0
 	beq	.1
 	move.w	n_dmabit(a2),d0
@@ -1410,7 +1534,9 @@ mt_playvoice:
 	bra	moreblockedfx
 
 	; do only some limited commands, while sound effect is in progress
-.1:	move.w	n_intbit(a2),d0
+.1:	tst.b	n_looped(a2)
+	bne	moreblockedfx
+	move.w	n_intbit(a2),d0
 	and.w	INTREQR(a6),d0
 	beq	moreblockedfx
 	move.w	n_dmabit(a2),d0
@@ -1457,8 +1583,12 @@ mt_playvoice:
 	move.w	(a0)+,d0		; length
 	bne	.4
 
+	ifne	NULL_IS_CLEARED
+	moveq	#0,d2			; use $0 for empty samples
+	else
 	; use the first two bytes from the first sample for empty samples
 	move.l	mt_SampleStarts(a4),d2
+	endc
 	addq.w	#1,d0
 
 .4:	move.l	d2,n_start(a2)
@@ -1486,7 +1616,6 @@ mt_playvoice:
 	add.l	d3,d2
 	add.l	d3,d2
 	move.w	(a0),d0
-;	beq	idle_looping		; @@@ shouldn't happen, d0=n_length!?
 	move.w	d0,n_replen(a2)
 	exg	d0,d3			; n_replen to d3
 	add.w	d3,d0
@@ -1500,11 +1629,16 @@ mult30tab:
 
 no_offset:
 	move.w	(a0),d3
+	ifne	NULL_IS_CLEARED
+	cmp.w	#1,d3
+	beq	.1
+	bhi	set_replen
+	else
 	bne	set_replen
-idle_looping:
+	endc
 	; repeat length zero means idle-looping
-	moveq	#0,d2			; FIXME: expect two zero bytes at $0
 	addq.w	#1,d3
+.1:	moveq	#0,d2			; expect two zero bytes at $0
 set_replen:
 	move.w	d3,n_replen(a2)
 set_len_start:
@@ -2971,7 +3105,7 @@ MasterVolTab64:
 
 *****************************************************************************
 
-	section	FW_PublicBss_Music,bss
+	section	__MERGED,bss
 
 	rsreset
 ; Antiriad - put this at the start of mt_data to avoid alignment issues with the rs.b near the end

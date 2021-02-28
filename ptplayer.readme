@@ -46,6 +46,10 @@ may be used for sound effects at once.
 The master volume is always applied to the music, but does not affect
 external sound effects at all.
 
+NOTE: When playing external sound effects, always make sure the first
+word is cleared! It is used for idling when the effect stopped. This
+is the same technique as used by the music samples in Amiga trackers.
+
 
 How to use:
 
@@ -55,13 +59,13 @@ How to use:
 ptplayer.asm can be configured to support two data models:
 
 a) By default ptplayer.asm assembles into a single code section. The
-   interface functions set up a local base register to access data.
+   player routines set up a local base register to access data.
    This requires a working RS directive, which is provided by many
    assemblers, like e.g. vasm, PhxAss, Devpac, Basm, AsmOne, SNMA.
 
 b) By defining the SDATA symbol ptplayer.asm assembles into a code
-   section and a small-data section (called __MERGED). All interface
-   functions expect that the base register A4 is set up with the
+   section and a small-data section (called __MERGED). All player
+   routines expect that the base register A4 is set up with the
    small-data base pointer (provided by the linker through _LinkerDB).
    It uses the NEAR directive, which might work with vasm and PhxAss only.
 
@@ -79,6 +83,11 @@ b) By defining the symbol ENABLE_SAWRECT=0 (defaults to 1) you may
    disable sawtooth and rectangle vibratos/tremolos. When selected,
    they are replaced by sine-waves. These wave forms are extremely
    rare and disabling them saves another 2K for the tables.
+
+c) By defining the symbol NULL_IS_CLEARED=1 (defaults to 0) you indicate
+   that the memory locations $0 and $1 in your system are zero, so they
+   will be used for idle-looping of audio channels. Might be useful when
+   dynamically loading new samples.
 
 You may change these symbols either directly in the source or override
 them via the assembler's command line.
@@ -125,10 +134,11 @@ _mt_init(a6=CUSTOM, a0=TrackerModule, a1=Samples|NULL, d0=InitialSongPos.b)
   Initialize a new module.
   Reset speed to 6, tempo to 125 and start at the given song position.
   Master volume is at 64 (maximum).
-  When a1 is NULL the samples are assumed to be stored after the patterns.
+  When a1 is NULL the samples are assumed to be stored after the patterns,
+  which is the usual case.
 
 _mt_end(a6=CUSTOM)
-  Stop playing current module.
+  Stop playing current module and sound effects.
 
 _mt_soundfx(a6=CUSTOM, a0=SamplePointer,
             d0=SampleLength.w, d1=SamplePeriod.w, d2=SampleVolume.w)
@@ -140,12 +150,12 @@ channelStatus = _mt_playfx(a6=CUSTOM, a0=SfxStructurePointer)
   Request playing of a prioritized external sound effect, either on a
   fixed channel or on the most unused one.
   Structure layout of SfxStructure:
-    APTR  sfx_ptr  (pointer to sample start in Chip RAM, even address)
+    void *sfx_ptr  (pointer to sample start in Chip RAM, even address)
     WORD  sfx_len  (sample length in words)
     WORD  sfx_per  (hardware replay period for sample)
     WORD  sfx_vol  (volume 0..64, is unaffected by the song's master volume)
     BYTE  sfx_cha  (0..3 selected replay channel, -1 selects best channel)
-    UBYTE sfx_pri  (unsigned priority, must be non-zero)
+    BYTE  sfx_pri  (priority, must be in the range 1..127)
   When multiple samples are assigned to the same channel the lower
   priority sample will be replaced. When priorities are the same, then
   the older sample is replaced.
@@ -154,9 +164,27 @@ channelStatus = _mt_playfx(a6=CUSTOM, a0=SfxStructurePointer)
   RETURN VALUES: A pointer to a channel-status structure (see ptplayer.h)
   when the sample is scheduled for playing, and NULL when the request was
   ignored.
-  NOTE: Always make sure the first two bytes of your sound effect sample
+  NOTE: Always make sure the first word of your sound effect sample
   are zero!
   !MINIMAL only.
+
+_mt_loopfx(a6=CUSTOM, a0=SfxStructurePointer)
+  Request playing of a looped sound effect on a fixed channel, which
+  will be blocked for music until the effect is stopped (_mt_stopfx).
+  It uses the same SfxStructure as _mt_playfx, but the priority is
+  ignored. A looped sound effect has always highest priority and will
+  replace a previous effect on the same channel. No automatic channel
+  selection possible!
+  Also make sure the sample starts with a zero-word, which is used
+  for idling when the effect is stopped. This word is included in the
+  total length calculation, but excluded when actually playing the loop.
+  !MINIMAL only.
+
+_mt_stopfx(a6=CUSTOM, d0=Channel.b)
+  Immediately stop a currently playing sound effect on a channel (0..3)
+  and make it available for music, or other effects, again. This is the
+  only way to stop a looped sound effect (_mt_loopfx), besides stopping
+  replay completely (_mt_end). !MINIMAL only.
 
 _mt_musicmask(a6=CUSTOM, d0=ChannelMask.b)
   Bits set in the mask define which specific channels are reserved
@@ -304,9 +332,16 @@ History:
 6.1:
 - Fixed note delay command (EDx), which still played the previous note
   in some situations (Antiriad/EAB).
+- mt_mastervol() must change the volumes of all channels immediately
+  and shouldn't wait for the next sample being played.
 - Symbol ENABLE_SAWRECT may be used to disable sawtooth and rectangle
   waveforms for vibrato and tremolo, which saves memory for their tables
   (suggested by Antiriad).
+- Symbol NULL_IS_CLEARED may be used to indicate that the memory locations
+  $0 and $1 in your system are zero, so they will be used for idle-looping
+  of audio channels.
 - Removed cia.i and custom.i include files and included the required
   symbols directly into the source.
+- New function mt_loopfx() for playing looped sound effects.
+- New function mt_stopfx() for immediately stopping a sound effect.
 - UNRELEASED
