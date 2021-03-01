@@ -8,11 +8,13 @@
 ; I, the copyright holder of this work, hereby release it into the
 ; public domain. This applies worldwide.
 ;
-; 6.1 (unofficial) - Antiriad's mods for small code size
+; 6.1 minimal (unofficial) - Antiriad's mods for small executable size
 ; - Removed SDATA code.
-; - mt_data is in BSS (no longer completely PC relative, focused on exe size) 
-; - Period table generated in code saving about 1KB.
-; - VUMeter trigger added in _mt_VUMeter
+; - mt_data is in BSS (no longer completely PC relative, focused on exe size)
+; - Period and finetune table generated in code saving about 1KB.
+; - Vibrato sine table generate in code saving about 1KB.
+; - VUMeter trigger added in _mt_VUMeter which allows for demo/music sync effects with playing notes
+; Note: Will only assemble with MINIMAL set to 1.
 ;
 ; The default version (single section, local base register) should
 ; work with most assemblers. Tested are: Devpac, vasm, PhxAss,
@@ -551,7 +553,7 @@ mt_generate_period_table:
 ; See: https://eab.abime.net/showpost.php?p=1465997&postcount=132
 
 mt_generate_vib_sine_table:
-	movem.l	d2,-(sp)
+	move.l	d2,-(sp)
 
 	lea	(mt_VibratoSineTable_End-64)(a4),a1
 	moveq	#15*2,d2
@@ -570,7 +572,7 @@ mt_generate_vib_sine_table:
 	subq.w	#1*2,d2
 	bge.b	.VTLoop1
 
-	movem.l	(sp)+,d2
+	move.l	(sp)+,d2
 	rts
 
 .table
