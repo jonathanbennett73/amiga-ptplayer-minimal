@@ -14,7 +14,6 @@
 ; - Period and finetune table generated in code saving about 1KB.
 ; - Vibrato sine table generate in code saving about 1KB.
 ; - VUMeter trigger added in _mt_VUMeter which allows for demo/music sync effects with playing notes
-; Note: Will only assemble with MINIMAL set to 1.
 ;
 ; The default version (single section, local base register) should
 ; work with most assemblers. Tested are: Devpac, vasm, PhxAss,
@@ -671,7 +670,7 @@ mt_reset:
 
 	ifeq	MINIMAL
 	; set master volume to 64
-	lea	MasterVolTab64(pc),a0
+	lea	MasterVolTab64(pc),a0	
 	move.l	a0,mt_MasterVolTab(a4)
 	endc
 
@@ -1084,11 +1083,7 @@ _mt_stopfx:
 ; a6 = CUSTOM
 ; d0.b = channel (0..3)
 
-	ifnd	SDATA
-	lea	mt_data+mt_chan1(pc),a0
-	else
-	lea	mt_chan1(a4),a0
-	endc
+	lea	mt_data+mt_chan1,a0
 
 	and.w	#3,d0
 	add.w	d0,d0
