@@ -1,5 +1,5 @@
 # amiga-ptplayer-minimal
-This is a  modified version of Frank Wille's ptplayer Amiga Protracker replay source with changes for small / 64KB demo productions to reduce the size of the code in the executable.
+This is a  modified version of Frank Wille's ptplayer Amiga Protracker replay source with changes for small / 64KB demo productions to reduce the size of the code in the executable. With all minimum options turned on replayer executable code size is ~3070 bytes.
 
 The original code is on Aminet: http://aminet.net/package/mus/play/ptplayer
 
