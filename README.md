@@ -6,7 +6,8 @@ The original code is on Aminet: http://aminet.net/package/mus/play/ptplayer
 The changes are:
 * mt_data is in BSS (no longer completely PC relative, focused on exe size) 
 * MINIMAL_ENABLE_VIB_SAWRECT to enable SAW and RECT vib/tremolo. Saves a few KB.
-* Period table generated in code saving about 1KB.
-* VUMeter trigger added in _mt_VUMeter
+* Period and finetune table generated in code saving about 1KB.
+* Vibrato sine table generate in code saving about 1KB.
+* VUMeter trigger added in mt_VUMeter which allows for demo/music sync effects with playing notes
 
 Jonathan Bennett / Antiriad
