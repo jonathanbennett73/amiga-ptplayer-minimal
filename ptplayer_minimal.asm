@@ -259,7 +259,6 @@ n_reserved2	rs.b	3
 	endc
 n_sizeof	rs.b	0
 
-
 ;---------------------------------------------------------------------------
 	xdef	_mt_install_cia
 _mt_install_cia:
@@ -477,8 +476,8 @@ mt_TimerBsetrep:
 ;
 ; See: https://eab.abime.net/showpost.php?p=1416034&postcount=47
 
-pt_period_generator:
-	movem.l	d0-d7/a0-a6,-(sp)
+mt_generate_period_table:
+	movem.l	d2-d5,-(sp)
 
 	lea	mt_PeriodTable(a4),a0
 	lea	.seeds(pc),a1
@@ -522,7 +521,7 @@ pt_period_generator:
 	add.w	d2,d0
 	dbf	d1,.floop
 
-	movem.l	(sp)+,d0-d7/a0-a6
+	movem.l	(sp)+,d2-d5
 	rts
 
 .seeds:
@@ -543,6 +542,44 @@ pt_period_generator:
 	dc.w	$E632,$9868,$4000	;mt_TuningM2
 	dc.w	$E461,$0000,$0000	;mt_TuningM1
 
+
+;---------------------------------------------------------------------------
+; Antiriad:
+; Generates the sine vibrato table. Thanks to a/b.
+; In: a4, mt_data
+;
+; See: https://eab.abime.net/showpost.php?p=1465997&postcount=132
+
+mt_generate_vib_sine_table:
+	movem.l	d2,-(sp)
+
+	lea	(mt_VibratoSineTable_End-64)(a4),a1
+	moveq	#15*2,d2
+.VTLoop1
+	lea	(.table,pc),a0
+	moveq	#64/2-1,d1
+.VTLoop2
+	move.w	(a0)+,d0
+	mulu.w	d2,d0
+	swap	d0
+	move.b	d0,(a1)+
+	neg.b	d0
+	move.b	d0,(32-1,a1)
+	dbf	d1,.VTLoop2
+	lea	(-64/2-64,a1),a1
+	subq.w	#1*2,d2
+	bge.b	.VTLoop1
+
+	movem.l	(sp)+,d2
+	rts
+
+.table
+	dc.w	$0000,$1800,$3100,$4a00,$6100,$7800,$8d00,$a100
+	dc.w	$b400,$c500,$d400,$e000,$eb00,$f400,$fa00,$fd00
+	dc.w	$ff00,$fd00,$fa00,$f400,$eb00,$e000,$d400,$c500
+	dc.w	$b400,$a100,$8d00,$7800,$6100,$4a00,$3100,$1800
+
+
 ;---------------------------------------------------------------------------
 
 	xdef	_mt_init
@@ -557,8 +594,6 @@ _mt_init:
 
 	move.l	a4,-(sp)
 	lea	mt_data,a4
-
-	bsr	pt_period_generator	;Create period table
 
 	move.l	a0,mt_mod(a4)
 	movem.l	d2/a2,-(sp)
@@ -614,6 +649,12 @@ _mt_init:
 	move.b	d0,CIAB+CIATALO
 	lsr.w	#8,d0
 	move.b	d0,CIAB+CIATAHI
+
+	;Antiriad - generator code
+	bsr	mt_generate_period_table		;Create period table
+	bsr	mt_generate_vib_sine_table	;Create sine vibrato table
+	;Antiriad - end
+	;Fallthrough to mt_reset
 
 mt_reset:
 ; a4 must be initialised with base register
@@ -1110,6 +1151,9 @@ _mt_mastervol:
 ; a6 = CUSTOM
 ; d0.w = master volume
 
+	move.l	a4,-(sp)
+	lea	mt_data,a4
+
 	; stingray, since each volume table has a size of 65 bytes
 	; we simply multiply (optimised of course) by 65 to get the
 	; offset to the correct table
@@ -1120,11 +1164,24 @@ _mt_mastervol:
 
 	move.w	#$4000,INTENA(a6)
 
-	;Antiriad: No master volume
-	lea	mt_data+mt_MasterVolTab,a1
-	move.l	a0,(a1)
+	; adapt all channel volumes immediately
+	move.l	a0,mt_MasterVolTab(a4)
+	move.w	mt_chan1+n_volume(a4),d0
+	move.b	(a0,d0.w),d0
+	move.w	d0,AUD0VOL(a6)
+	move.w	mt_chan2+n_volume(a4),d0
+	move.b	(a0,d0.w),d0
+	move.w	d0,AUD1VOL(a6)
+	move.w	mt_chan3+n_volume(a4),d0
+	move.b	(a0,d0.w),d0
+	move.w	d0,AUD2VOL(a6)
+	move.w	mt_chan4+n_volume(a4),d0
+	move.b	(a0,d0.w),d0
+	move.w	d0,AUD3VOL(a6)
+
 	move.w	#$c000,INTENA(a6)
 
+	move.l	(sp)+,a4
 	rts
 
 
@@ -2020,7 +2077,7 @@ mt_vibrato_nc:
 	endc	; ENABLE_SAWRECT
 
 	; ctrl 0 selects a sine vibrato
-.6:	lea	mt_VibratoSineTable(pc),a0
+.6:	lea	mt_VibratoSineTable(a4),a0
 
 	; add vibrato-offset to period
 .9:	move.b	(a0,d2.w),d0
@@ -2095,7 +2152,7 @@ mt_tremolo:
 	endc	; ENABLE_SAWRECT
 
 	; ctrl 0 selects a sine tremolo
-.6:	lea	mt_VibratoSineTable(pc),a0
+.6:	lea	mt_VibratoSineTable(a4),a0
 
 	; add tremolo-offset to volume
 .9:	move.w	n_volume(a2),d0
@@ -2505,72 +2562,6 @@ mt_updatefunk:
 
 mt_FunkTable:
 	dc.b	0,5,6,7,8,10,11,13,16,19,22,26,32,43,64,128
-
-mt_VibratoSineTable:
-	dc.b	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-	dc.b	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-	dc.b	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-	dc.b	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-	dc.b	0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1
-	dc.b	1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0
-	dc.b	0,0,0,0,0,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
-	dc.b	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,0,0,0,0
-	dc.b	0,0,0,1,1,1,2,2,2,3,3,3,3,3,3,3
-	dc.b	3,3,3,3,3,3,3,3,2,2,2,1,1,1,0,0
-	dc.b	0,0,0,-1,-1,-1,-2,-2,-2,-3,-3,-3,-3,-3,-3,-3
-	dc.b	-3,-3,-3,-3,-3,-3,-3,-3,-2,-2,-2,-1,-1,-1,0,0
-	dc.b	0,0,1,1,2,2,3,3,4,4,4,5,5,5,5,5
-	dc.b	5,5,5,5,5,5,4,4,4,3,3,2,2,1,1,0
-	dc.b	0,0,-1,-1,-2,-2,-3,-3,-4,-4,-4,-5,-5,-5,-5,-5
-	dc.b	-5,-5,-5,-5,-5,-5,-4,-4,-4,-3,-3,-2,-2,-1,-1,0
-	dc.b	0,0,1,2,3,3,4,5,5,6,6,7,7,7,7,7
-	dc.b	7,7,7,7,7,7,6,6,5,5,4,3,3,2,1,0
-	dc.b	0,0,-1,-2,-3,-3,-4,-5,-5,-6,-6,-7,-7,-7,-7,-7
-	dc.b	-7,-7,-7,-7,-7,-7,-6,-6,-5,-5,-4,-3,-3,-2,-1,0
-	dc.b	0,0,1,2,3,4,5,6,7,7,8,8,9,9,9,9
-	dc.b	9,9,9,9,9,8,8,7,7,6,5,4,3,2,1,0
-	dc.b	0,0,-1,-2,-3,-4,-5,-6,-7,-7,-8,-8,-9,-9,-9,-9
-	dc.b	-9,-9,-9,-9,-9,-8,-8,-7,-7,-6,-5,-4,-3,-2,-1,0
-	dc.b	0,1,2,3,4,5,6,7,8,9,9,10,11,11,11,11
-	dc.b	11,11,11,11,11,10,9,9,8,7,6,5,4,3,2,1
-	dc.b	0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-9,-10,-11,-11,-11,-11
-	dc.b	-11,-11,-11,-11,-11,-10,-9,-9,-8,-7,-6,-5,-4,-3,-2,-1
-	dc.b	0,1,2,4,5,6,7,8,9,10,11,12,12,13,13,13
-	dc.b	13,13,13,13,12,12,11,10,9,8,7,6,5,4,2,1
-	dc.b	0,-1,-2,-4,-5,-6,-7,-8,-9,-10,-11,-12,-12,-13,-13,-13
-	dc.b	-13,-13,-13,-13,-12,-12,-11,-10,-9,-8,-7,-6,-5,-4,-2,-1
-	dc.b	0,1,3,4,6,7,8,10,11,12,13,14,14,15,15,15
-	dc.b	15,15,15,15,14,14,13,12,11,10,8,7,6,4,3,1
-	dc.b	0,-1,-3,-4,-6,-7,-8,-10,-11,-12,-13,-14,-14,-15,-15,-15
-	dc.b	-15,-15,-15,-15,-14,-14,-13,-12,-11,-10,-8,-7,-6,-4,-3,-1
-	dc.b	0,1,3,5,6,8,9,11,12,13,14,15,16,17,17,17
-	dc.b	17,17,17,17,16,15,14,13,12,11,9,8,6,5,3,1
-	dc.b	0,-1,-3,-5,-6,-8,-9,-11,-12,-13,-14,-15,-16,-17,-17,-17
-	dc.b	-17,-17,-17,-17,-16,-15,-14,-13,-12,-11,-9,-8,-6,-5,-3,-1
-	dc.b	0,1,3,5,7,9,11,12,14,15,16,17,18,19,19,19
-	dc.b	19,19,19,19,18,17,16,15,14,12,11,9,7,5,3,1
-	dc.b	0,-1,-3,-5,-7,-9,-11,-12,-14,-15,-16,-17,-18,-19,-19,-19
-	dc.b	-19,-19,-19,-19,-18,-17,-16,-15,-14,-12,-11,-9,-7,-5,-3,-1
-	dc.b	0,2,4,6,8,10,12,13,15,16,18,19,20,20,21,21
-	dc.b	21,21,21,20,20,19,18,16,15,13,12,10,8,6,4,2
-	dc.b	0,-2,-4,-6,-8,-10,-12,-13,-15,-16,-18,-19,-20,-20,-21,-21
-	dc.b	-21,-21,-21,-20,-20,-19,-18,-16,-15,-13,-12,-10,-8,-6,-4,-2
-	dc.b	0,2,4,6,9,11,13,15,16,18,19,21,22,22,23,23
-	dc.b	23,23,23,22,22,21,19,18,16,15,13,11,9,6,4,2
-	dc.b	0,-2,-4,-6,-9,-11,-13,-15,-16,-18,-19,-21,-22,-22,-23,-23
-	dc.b	-23,-23,-23,-22,-22,-21,-19,-18,-16,-15,-13,-11,-9,-6,-4,-2
-	dc.b	0,2,4,7,9,12,14,16,18,20,21,22,23,24,25,25
-	dc.b	25,25,25,24,23,22,21,20,18,16,14,12,9,7,4,2
-	dc.b	0,-2,-4,-7,-9,-12,-14,-16,-18,-20,-21,-22,-23,-24,-25,-25
-	dc.b	-25,-25,-25,-24,-23,-22,-21,-20,-18,-16,-14,-12,-9,-7,-4,-2
-	dc.b	0,2,5,8,10,13,15,17,19,21,23,24,25,26,27,27
-	dc.b	27,27,27,26,25,24,23,21,19,17,15,13,10,8,5,2
-	dc.b	0,-2,-5,-8,-10,-13,-15,-17,-19,-21,-23,-24,-25,-26,-27,-27
-	dc.b	-27,-27,-27,-26,-25,-24,-23,-21,-19,-17,-15,-13,-10,-8,-5,-2
-	dc.b	0,2,5,8,11,14,16,18,21,23,24,26,27,28,29,29
-	dc.b	29,29,29,28,27,26,24,23,21,18,16,14,11,8,5,2
-	dc.b	0,-2,-5,-8,-11,-14,-16,-18,-21,-23,-24,-26,-27,-28,-29,-29
-	dc.b	-29,-29,-29,-28,-27,-26,-24,-23,-21,-18,-16,-14,-11,-8,-5,-2
 
 	ifne	ENABLE_SAWRECT
 mt_VibratoSawTable:
@@ -3109,25 +3100,30 @@ MasterVolTab64:
 
 	rsreset
 ; Antiriad - put this at the start of mt_data to avoid alignment issues with the rs.b near the end
-mt_PerFineTune:	rs.w	16
-mt_PeriodTable:	rs.w	0
-mt_Tuning0:	rs.w	36
-mt_Tuning1:	rs.w	36
-mt_Tuning2:	rs.w	36
-mt_Tuning3:	rs.w	36
-mt_Tuning4:	rs.w	36
-mt_Tuning5:	rs.w	36
-mt_Tuning6:	rs.w	36
-mt_Tuning7:	rs.w	36
-mt_TuningM8:	rs.w	36
-mt_TuningM7:	rs.w	36
-mt_TuningM6:	rs.w	36
-mt_TuningM5:	rs.w	36
-mt_TuningM4:	rs.w	36
-mt_TuningM3:	rs.w	36
-mt_TuningM2:	rs.w	36
-mt_TuningM1:	rs.w	36
+mt_PerFineTune	rs.w	16
+mt_PeriodTable	rs.w	0
+mt_Tuning0	rs.w	36
+mt_Tuning1	rs.w	36
+mt_Tuning2	rs.w	36
+mt_Tuning3	rs.w	36
+mt_Tuning4	rs.w	36
+mt_Tuning5	rs.w	36
+mt_Tuning6	rs.w	36
+mt_Tuning7	rs.w	36
+mt_TuningM8	rs.w	36
+mt_TuningM7	rs.w	36
+mt_TuningM6	rs.w	36
+mt_TuningM5	rs.w	36
+mt_TuningM4	rs.w	36
+mt_TuningM3	rs.w	36
+mt_TuningM2	rs.w	36
+mt_TuningM1	rs.w	36
 ; Antiriad - end of periodtable
+
+; Antiriad - vibrato sine table
+mt_VibratoSineTable	rs.b	16*64
+mt_VibratoSineTable_End	rs.b	0
+; Antiriad - end of vibrato sine table
 
 mt_chan1	rs.b	n_sizeof
 mt_chan2	rs.b	n_sizeof
