@@ -158,13 +158,21 @@ ENABLE_VUMETER	equ	0
 DMADELAY	equ	576		; was 496
 
 
-; Custom chip registers
+; Custom chip registers - try and catch predefined EQUs - if it fails sort this
+; out yourself :)
+	ifnd CUSTOM
 CUSTOM		equ	$dff000
+	endc	;CUSTOM
+
+	ifnd INTREQR
 INTREQR		equ	$01e
 INTENAR		equ	$01c
 DMACON		equ	$096
 INTENA		equ	$09a
 INTREQ		equ	$09c
+	endc	;INTREQR
+
+	ifnd AUD0LC
 AUD0LC		equ	$0a0
 AUD0LEN		equ	$0a4
 AUD0VOL		equ	$0a8
@@ -177,16 +185,23 @@ AUD2VOL		equ	$0c8
 AUD3LC		equ	$0d0
 AUD3LEN		equ	$0d4
 AUD3VOL		equ	$0d8
+	endc	;AUD0LC
 
 ; Audio channel registers
+	ifnd	AUDLC
 AUDLC		equ	0
 AUDLEN		equ	4
 AUDPER		equ	6
 AUDVOL		equ	8
+	endc	;AUDLC
 
 ; CIA registers
+	ifnd	CIAA
 CIAA		equ	$bfe001
 CIAB		equ	$bfd000
+	endc	;CIAA
+
+	ifnd	CIATALO
 CIAPRA		equ	$000
 CIATALO		equ	$400
 CIATAHI		equ	$500
@@ -195,7 +210,7 @@ CIATBHI		equ	$700
 CIAICR		equ	$d00
 CIACRA		equ	$e00
 CIACRB		equ	$f00
-
+	endc	;CIATALO
 
 ; Sound effects structure, passed into _mt_playfx
 		rsreset
@@ -652,7 +667,7 @@ _mt_init:
 	move.b	d0,CIAB+CIATAHI
 
 	;Antiriad - generator code
-	bsr	mt_generate_period_table		;Create period table
+	bsr	mt_generate_period_table	;Create period table
 	bsr	mt_generate_vib_sine_table	;Create sine vibrato table
 	;Antiriad - end
 	;Fallthrough to mt_reset
